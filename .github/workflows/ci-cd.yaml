@@ -265,8 +265,8 @@ jobs:
           }
 
           case "$NEXUS_REGISTRY" in
-            http://*|http://*)
-              echo "::error::NEXUS_REGISTRY must contain only host:port, for example nexus.example.com:8081. Do not include http:// or http://."
+            http://*|https://*)
+              echo "::error::NEXUS_REGISTRY must contain only host:port, for example nexus.example.com:8081. Do not include http:// or https://."
               exit 1
               ;;
           esac
@@ -281,45 +281,88 @@ jobs:
           echo "Nexus registry: $NEXUS_REGISTRY"
           echo "Nexus Docker repository: $NEXUS_DOCKER_REPOSITORY"
 
-      - name: Test Nexus Registry Connectivity
+      - name: Configure Docker daemon for HTTP Nexus registry
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Testing HTTP connectivity to Nexus..."
+          echo "Registering ${NEXUS_REGISTRY} as an insecure (HTTP) registry with the Docker daemon."
+          echo "This is required because this workflow talks to Nexus over plain HTTP, and the Docker"
+          echo "daemon defaults to HTTPS for any registry that isn't explicitly marked insecure -"
+          echo "without this, docker login/push fails with a TLS error even once the endpoint is correct."
 
-          HTTP_CODE="$(
-            curl \
-              --silent \
-              --show-error \
-              --output /dev/null \
-              --write-out "%{http_code}" \
-              --connect-timeout 10 \
-              --max-time 30 \
-              "http://${NEXUS_REGISTRY}/v2/"
-          )"
+          sudo mkdir -p /etc/docker
 
-          echo "Nexus /v2/ HTTP status: $HTTP_CODE"
+          if [ -s /etc/docker/daemon.json ]; then
+            sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak
+            jq --arg reg "$NEXUS_REGISTRY" \
+              '.["insecure-registries"] = ((.["insecure-registries"] // []) + [$reg] | unique)' \
+              /etc/docker/daemon.json.bak | sudo tee /etc/docker/daemon.json > /dev/null
+          else
+            printf '{"insecure-registries": ["%s"]}\n' "$NEXUS_REGISTRY" | sudo tee /etc/docker/daemon.json > /dev/null
+          fi
 
-          case "$HTTP_CODE" in
-            200|401)
-              echo "Nexus Docker Registry is reachable."
-              ;;
-            *)
-              echo "::error::Nexus Docker Registry returned HTTP $HTTP_CODE."
-              exit 1
-              ;;
-          esac
+          sudo systemctl restart docker
+
+          for i in $(seq 1 15); do
+            docker info > /dev/null 2>&1 && break
+            sleep 1
+          done
+          docker info > /dev/null
+
+          echo "Docker daemon reconfigured and restarted."
 
       - name: Login to Nexus Docker Registry
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "$NEXUS_PASSWORD" | \
-            docker login "$NEXUS_REGISTRY" \
+          echo "Attempting docker login to ${NEXUS_REGISTRY} - this is the authoritative registry check."
+          echo "(A separate curl pre-check was removed: it validated the wrong thing - it accepted"
+          echo "only 200/401 on a bare /v2/ GET, which doesn't account for path-based Docker routing"
+          echo "or redirects, and duplicated what docker login already verifies correctly.)"
+
+          if echo "$NEXUS_PASSWORD" | docker login "$NEXUS_REGISTRY" \
               --username "$NEXUS_USERNAME" \
-              --password-stdin
+              --password-stdin; then
+            echo "Docker login succeeded."
+            exit 0
+          fi
+
+          echo "::error::Docker login to $NEXUS_REGISTRY failed. Running diagnostics to isolate the cause (no credentials are printed below)."
+
+          HOST="${NEXUS_REGISTRY%%:*}"
+          PORT="${NEXUS_REGISTRY##*:}"
+
+          echo "---- 1. DNS resolution for $HOST ----"
+          getent hosts "$HOST" || echo "DNS resolution FAILED for $HOST"
+
+          echo "---- 2. Raw TCP connectivity to $HOST:$PORT ----"
+          if timeout 5 bash -c "echo > /dev/tcp/${HOST}/${PORT}" 2>/dev/null; then
+            echo "TCP connect to $HOST:$PORT: OK"
+          else
+            echo "TCP connect to $HOST:$PORT: FAILED (network/firewall/wrong host or port)"
+          fi
+
+          echo "---- 3. HTTP status at http://$NEXUS_REGISTRY/v2/ (registry root) ----"
+          curl -s -o /dev/null -w "status=%{http_code}\n" \
+            --connect-timeout 10 --max-time 15 \
+            "http://${NEXUS_REGISTRY}/v2/" || echo "curl request failed"
+
+          echo "---- 4. HTTP status at http://$NEXUS_REGISTRY/${NEXUS_DOCKER_REPOSITORY}/v2/ (path-based) ----"
+          curl -s -o /dev/null -w "status=%{http_code}\n" \
+            --connect-timeout 10 --max-time 15 \
+            "http://${NEXUS_REGISTRY}/${NEXUS_DOCKER_REPOSITORY}/v2/" || echo "curl request failed"
+
+          echo "---- 5. Nexus core REST API at http://$NEXUS_REGISTRY/service/rest/v1/status ----"
+          echo "(200 here together with 404 on step 3 means NEXUS_REGISTRY points at Nexus's main"
+          echo " application port, not the Docker repository's dedicated HTTP/HTTPS connector port -"
+          echo " check Nexus Admin > Repository > Repositories > ${NEXUS_DOCKER_REPOSITORY} for its port.)"
+          curl -s -o /dev/null -w "status=%{http_code}\n" \
+            --connect-timeout 10 --max-time 15 \
+            "http://${NEXUS_REGISTRY}/service/rest/v1/status" || echo "curl request failed"
+
+          exit 1
 
       - name: Verify Docker image
         run: |
@@ -383,7 +426,7 @@ jobs:
           }
 
           case "$NEXUS_REGISTRY" in
-            http://*|http://*|*/*)
+            http://*|https://*|*/*)
               echo "::error::NEXUS_REGISTRY must be host:port only, for example nexus.example.com:8081."
               exit 1
               ;;

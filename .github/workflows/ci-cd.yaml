@@ -1,0 +1,386 @@
+name: Generic CI/CD
+
+# One reusable pipeline for every project type (React, Angular, Java, .NET,
+# Python, PHP, Node.js, ...). Per-project behavior comes entirely from
+# .cicd/config.yml — see .cicd/README.md. Adding a new tech stack should only
+# ever require: (1) a config.yml, (2) at most one new `if:`-gated setup step
+# below, (3) mapping entries in .cicd/mappings/*.yml. Never hardcode
+# project-specific logic elsewhere in this file.
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment (dev/qa/prod)"
+        required: false
+        default: "dev"
+
+permissions:
+  contents: read
+  security-events: write
+  packages: write
+  id-token: write
+
+env:
+  CONFIG_FILE: .cicd/config.yml
+
+jobs:
+
+  # ============================================================
+  # 1. VALIDATE CONFIGURATION
+  # Parses config.yml, applies defaults, fails fast on bad/missing input,
+  # and resolves the values every later job needs to decide what to run.
+  # ============================================================
+  validate:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+
+    outputs:
+      language: ${{ steps.resolve.outputs.language }}
+      runtimeVersion: ${{ steps.resolve.outputs.runtimeVersion }}
+      dockerEnabled: ${{ steps.resolve.outputs.dockerEnabled }}
+      sonarEnabled: ${{ steps.resolve.outputs.sonarEnabled }}
+      securityScanEnabled: ${{ steps.resolve.outputs.securityScanEnabled }}
+      containerScan: ${{ steps.resolve.outputs.containerScan }}
+      deploymentEnabled: ${{ steps.resolve.outputs.deploymentEnabled }}
+      deploymentType: ${{ steps.resolve.outputs.deploymentType }}
+      deploymentTarget: ${{ steps.resolve.outputs.deploymentTarget }}
+      artifactRepositoryEnabled: ${{ steps.resolve.outputs.artifactRepositoryEnabled }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Detect project structure
+        run: |
+          chmod +x .cicd/scripts/detect-project.sh
+          .cicd/scripts/detect-project.sh
+
+      - name: Validate CI/CD configuration
+        id: resolve
+        run: |
+          chmod +x .cicd/scripts/validate-config.sh
+          .cicd/scripts/validate-config.sh "$CONFIG_FILE"
+
+
+  # ============================================================
+  # 2. SETUP + INSTALL + LINT + TEST + BUILD + PACKAGE
+  # Toolchain install is delegated to the official actions/setup-* action for
+  # the project's language (only one of these steps ever runs, per `if:`);
+  # everything after that is driven entirely by config.yml through scripts.
+  # ============================================================
+  build-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        if: needs.validate.outputs.language == 'javascript' || needs.validate.outputs.language == 'typescript'
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ needs.validate.outputs.runtimeVersion }}
+
+      - name: Setup Java
+        if: needs.validate.outputs.language == 'java'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ needs.validate.outputs.runtimeVersion }}
+
+      - name: Setup .NET
+        if: needs.validate.outputs.language == 'csharp'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ needs.validate.outputs.runtimeVersion }}
+
+      - name: Setup Python
+        if: needs.validate.outputs.language == 'python'
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ needs.validate.outputs.runtimeVersion }}
+
+      - name: Setup PHP
+        if: needs.validate.outputs.language == 'php'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ needs.validate.outputs.runtimeVersion }}
+
+      - name: Setup Rust
+        if: needs.validate.outputs.language == 'rust'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ needs.validate.outputs.runtimeVersion }}
+
+      - name: Confirm runtime
+        run: |
+          chmod +x .cicd/scripts/setup-runtime.sh
+          .cicd/scripts/setup-runtime.sh "$CONFIG_FILE"
+
+      - name: Install dependencies
+        run: |
+          chmod +x .cicd/scripts/install-dependencies.sh
+          .cicd/scripts/install-dependencies.sh "$CONFIG_FILE"
+
+      - name: Run lint
+        run: |
+          chmod +x .cicd/scripts/lint.sh
+          .cicd/scripts/lint.sh "$CONFIG_FILE"
+
+      - name: Run tests
+        run: |
+          chmod +x .cicd/scripts/test.sh
+          .cicd/scripts/test.sh "$CONFIG_FILE"
+
+      - name: Build application
+        run: |
+          chmod +x .cicd/scripts/build.sh
+          .cicd/scripts/build.sh "$CONFIG_FILE"
+
+      - name: Package artifact
+        run: |
+          chmod +x .cicd/scripts/package.sh
+          .cicd/scripts/package.sh "$CONFIG_FILE"
+
+      - name: Upload application artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: application-artifact
+          path: .cicd/output/
+          if-no-files-found: warn
+
+
+  # ============================================================
+  # 3. ARTIFACT REPOSITORY
+  # ============================================================
+  nexus:
+
+    name: Publish Artifact to Nexus
+
+    runs-on: ubuntu-latest
+
+    needs:
+      - validate
+      - build-test
+
+    if: |
+      needs.validate.outputs.artifactRepositoryEnabled == 'true'
+
+    steps:
+
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Download application artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: application-artifact
+          path: .cicd/output
+
+      - name: Publish artifact to Nexus
+        run: |
+          chmod +x .cicd/scripts/nexus.sh
+          .cicd/scripts/nexus.sh publish "$CONFIG_FILE"
+        env:
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+
+  # ============================================================
+  # 4. SONARQUBE
+  # ============================================================
+  sonarqube:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    needs: [validate, build-test]
+    if: needs.validate.outputs.sonarEnabled == 'true'
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate Sonar properties
+        run: |
+          chmod +x .cicd/scripts/sonar.sh
+          .cicd/scripts/sonar.sh "$CONFIG_FILE"
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+
+  # ============================================================
+  # 5. SECURITY SCAN
+  # ============================================================
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: [validate, build-test]
+    if: needs.validate.outputs.securityScanEnabled == 'true'
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Resolve security scan settings
+        id: sec
+        run: |
+          chmod +x .cicd/scripts/security-scan.sh
+          .cicd/scripts/security-scan.sh "$CONFIG_FILE"
+
+      - name: Trivy filesystem / dependency scan
+        if: steps.sec.outputs.filesystemScan == 'true' || steps.sec.outputs.dependencyScan == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: 1
+
+
+  # ============================================================
+  # 6. DOCKER
+  # ============================================================
+  docker:
+    name: Build Container
+    runs-on: ubuntu-latest
+    needs: [validate, build-test, security]
+    if: |
+      always() &&
+      needs.validate.outputs.dockerEnabled == 'true' &&
+      needs.build-test.result == 'success' &&
+      (needs.security.result == 'success' || needs.security.result == 'skipped')
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve image metadata
+        id: meta
+        run: |
+          chmod +x .cicd/scripts/docker.sh
+          .cicd/scripts/docker.sh meta "$CONFIG_FILE"
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ steps.meta.outputs.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tag }}
+
+      - name: Scan Docker image
+        if: needs.validate.outputs.containerScan == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.meta.outputs.tag }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: 1
+
+      - name: Login to registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Docker image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ steps.meta.outputs.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tag }}
+
+
+  # ============================================================
+  # 7. DEPLOY
+  # ============================================================
+  deploy:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    needs: [validate, docker, sonarqube]
+    if: |
+      always() &&
+      needs.validate.outputs.deploymentEnabled == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' &&
+      (needs.docker.result == 'success' || needs.docker.result == 'skipped') &&
+      (needs.sonarqube.result == 'success' || needs.sonarqube.result == 'skipped')
+
+    environment:
+      name: ${{ inputs.environment || 'dev' }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Resolve deployment settings
+        id: dep
+        run: |
+          chmod +x .cicd/scripts/deploy.sh
+          .cicd/scripts/deploy.sh resolve "$CONFIG_FILE" "${{ inputs.environment || 'dev' }}"
+
+      - name: Deploy to VPS
+        if: steps.dep.outputs.target == 'vps'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            IMAGE="${{ steps.dep.outputs.image }}"
+            NAME="${{ steps.dep.outputs.containerName }}"
+            PORT="${{ steps.dep.outputs.port }}"
+            HOST_PORT="${{ steps.dep.outputs.hostPort }}"
+            RESTART="${{ steps.dep.outputs.restartPolicy }}"
+
+            echo "Pulling $IMAGE..."
+            docker pull "$IMAGE"
+
+            echo "Removing old container..."
+            docker stop "$NAME" || true
+            docker rm "$NAME" || true
+
+            echo "Starting new container..."
+            docker run -d \
+              --name "$NAME" \
+              --restart "$RESTART" \
+              -p "$HOST_PORT:$PORT" \
+              "$IMAGE"
+
+            echo "Waiting for application..."
+            for i in {1..10}; do
+              if curl --fail --silent "http://127.0.0.1:$HOST_PORT/" > /dev/null; then
+                echo "Application is healthy"
+                exit 0
+              fi
+              echo "Application not ready yet... attempt $i/10"
+              sleep 3
+              if [ "$i" -eq 10 ]; then
+                echo "Application health check failed"
+                docker ps -a
+                docker logs --tail 100 "$NAME"
+                exit 1
+              fi
+            done

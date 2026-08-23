@@ -1,0 +1,8 @@
+# Overlay applied on top of config.yml when deploying to the "qa" environment.
+# Merge order (lowest to highest precedence): mappings/defaults.yml -> config.yml -> this file.
+
+deployment:
+  environment: qa
+  container:
+    hostPort: 9080
+    restartPolicy: "unless-stopped"

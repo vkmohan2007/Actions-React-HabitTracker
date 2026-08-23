@@ -1,0 +1,52 @@
+project:
+  name: php-app
+  projectType: backend
+  language: php
+  framework: laravel
+
+runtime:
+  version: "8.3"
+
+build:
+  tool: composer
+  packageManager: composer
+
+  installCommand: "composer install --no-interaction --prefer-dist"
+  buildCommand: ""
+  testCommand: "php artisan test"
+  lintCommand: ""
+
+  artifactPath: "."
+  coveragePath: "coverage"
+
+quality:
+  sonarEnabled: true
+
+security:
+  securityScanEnabled: true
+  filesystemScan: true
+  dependencyScan: true
+  containerScan: true
+
+docker:
+  enabled: true
+  dockerfile: Dockerfile
+  imageName: php-app
+  registry: ghcr
+
+deployment:
+  enabled: true
+  type: container
+  environment: dev
+  target: vps
+
+  container:
+    port: 80
+    hostPort: 8080
+
+artifactRepository:
+  enabled: false
+  type: nexus
+  format: raw
+  url: ""
+  repository: ""

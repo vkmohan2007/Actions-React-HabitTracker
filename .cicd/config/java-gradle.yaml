@@ -1,0 +1,50 @@
+project:
+  name: java-app
+  projectType: backend
+  language: java
+  framework: spring-boot
+
+runtime:
+  version: "21"
+
+build:
+  tool: gradle
+  packageManager: gradle
+
+  installCommand: ""
+  buildCommand: "./gradlew clean build -x test"
+  testCommand: "./gradlew test"
+  artifactPath: "build/libs/*.jar"
+  coveragePath: "build/reports/jacoco"
+
+quality:
+  sonarEnabled: true
+
+security:
+  securityScanEnabled: true
+  filesystemScan: true
+  dependencyScan: true
+  containerScan: true
+
+docker:
+  enabled: true
+  dockerfile: Dockerfile
+  imageName: java-app
+  registry: ghcr
+
+deployment:
+  enabled: true
+  type: container
+  environment: dev
+  target: vps
+
+  container:
+    port: 8080
+    hostPort: 8080
+
+artifactRepository:
+  enabled: false
+  type: nexus
+  format: raw
+  url: ""
+  repository: ""

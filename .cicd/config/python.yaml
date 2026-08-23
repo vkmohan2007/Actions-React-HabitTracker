@@ -1,0 +1,52 @@
+project:
+  name: python-app
+  projectType: backend
+  language: python
+  framework: fastapi
+
+runtime:
+  version: "3.12"
+
+build:
+  tool: pip
+  packageManager: pip
+
+  installCommand: "pip install -r requirements.txt"
+  buildCommand: ""
+  testCommand: "pytest"
+  lintCommand: "ruff check ."
+
+  artifactPath: "dist"
+  coveragePath: "htmlcov"
+
+quality:
+  sonarEnabled: true
+
+security:
+  securityScanEnabled: true
+  filesystemScan: true
+  dependencyScan: true
+  containerScan: true
+
+docker:
+  enabled: true
+  dockerfile: Dockerfile
+  imageName: python-app
+  registry: ghcr
+
+deployment:
+  enabled: true
+  type: container
+  environment: dev
+  target: vps
+
+  container:
+    port: 8000
+    hostPort: 8000
+
+artifactRepository:
+  enabled: false
+  type: nexus
+  format: raw
+  url: ""
+  repository: ""

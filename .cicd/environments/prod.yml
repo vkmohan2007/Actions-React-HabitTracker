@@ -1,0 +1,8 @@
+# Overlay applied on top of config.yml when deploying to the "prod" environment.
+# Merge order (lowest to highest precedence): mappings/defaults.yml -> config.yml -> this file.
+
+deployment:
+  environment: prod
+  container:
+    hostPort: 80
+    restartPolicy: "always"

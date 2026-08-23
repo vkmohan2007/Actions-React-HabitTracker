@@ -1,0 +1,53 @@
+project:
+  name: java-app
+  projectType: backend
+  language: java
+  framework: spring-boot
+
+runtime:
+  version: "21"
+
+build:
+  tool: maven
+  packageManager: maven
+
+  installCommand: ""
+  buildCommand: "mvn -B clean package -DskipTests"
+  testCommand: "mvn -B test"
+  lintCommand: ""
+
+  artifactPath: "target/*.jar"
+  coveragePath: "target/site/jacoco"
+
+quality:
+  sonarEnabled: true
+
+security:
+  securityScanEnabled: true
+  filesystemScan: true
+  dependencyScan: true
+  containerScan: true
+
+docker:
+  enabled: true
+  dockerfile: Dockerfile
+  imageName: java-app
+  registry: ghcr
+
+deployment:
+  enabled: true
+  type: container
+  environment: dev
+  target: vps
+
+  container:
+    port: 8080
+    hostPort: 8080
+
+artifactRepository:
+  enabled: true
+  type: nexus
+  format: raw
+  url: "https://nexus.example.com"
+  repository: "raw-releases"
+  groupPath: "java-app"

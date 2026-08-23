@@ -1,0 +1,62 @@
+project:
+  name: my-application
+  projectType: frontend
+  language: javascript
+  framework: react
+
+runtime:
+  version: "22"
+
+build:
+  tool: npm
+  packageManager: npm
+
+  installCommand: "npm ci"
+  buildCommand: "npm run build"
+  testCommand: "npm run test:ci"
+  lintCommand: "npm run lint"
+
+  artifactPath: "dist"
+  artifactName: "my-application"
+  outputType: "directory"
+  coveragePath: "coverage"
+
+quality:
+  sonarEnabled: true
+  qualityGateEnabled: true
+  failOnQualityGate: true
+
+security:
+  securityScanEnabled: true
+  filesystemScan: true
+  dependencyScan: true
+  containerScan: true
+
+artifactRepository:
+  enabled: true
+  type: "nexus"
+  repositoryType: "raw"
+
+  url: ""
+  repository: ""
+
+  artifactId: "my-application"
+  versionStrategy: "git-sha"
+  packaging: "zip"
+
+docker:
+  enabled: true
+  dockerfile: "Dockerfile"
+  imageName: "my-application"
+  registry: "ghcr"
+  tagStrategy: "git-sha"
+
+deployment:
+  enabled: true
+  type: "container"
+  target: "vps"
+
+  container:
+    port: 80
+    hostPort: 9999
+    restartPolicy: "unless-stopped"

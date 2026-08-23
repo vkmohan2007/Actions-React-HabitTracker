@@ -1,0 +1,13 @@
+GitHub
+│
+├── dev
+│   ├── NEXUS_USERNAME
+│   └── NEXUS_PASSWORD
+│
+├── qa
+│   ├── NEXUS_USERNAME
+│   └── NEXUS_PASSWORD
+│
+└── prod
+    ├── NEXUS_USERNAME
+    └── NEXUS_PASSWORD

@@ -266,7 +266,7 @@ jobs:
 
           case "$NEXUS_REGISTRY" in
             http://*|https://*)
-              echo "::error::NEXUS_REGISTRY must contain only host:port, for example nexus.example.com:8082. Do not include http:// or https://."
+              echo "::error::NEXUS_REGISTRY must contain only host:port, for example nexus.example.com:8081. Do not include http:// or https://."
               exit 1
               ;;
           esac
@@ -384,7 +384,7 @@ jobs:
 
           case "$NEXUS_REGISTRY" in
             http://*|https://*|*/*)
-              echo "::error::NEXUS_REGISTRY must be host:port only, for example nexus.example.com:8082."
+              echo "::error::NEXUS_REGISTRY must be host:port only, for example nexus.example.com:8081."
               exit 1
               ;;
           esac

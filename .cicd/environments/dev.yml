@@ -1,9 +1,0 @@
-# Overlay applied on top of config.yml when deploying to the "dev" environment.
-# Merge order (lowest to highest precedence): mappings/defaults.yml -> config.yml -> this file.
-# Only list the keys that actually differ per environment.
-
-deployment:
-  environment: dev
-  container:
-    hostPort: 9999
-    restartPolicy: "unless-stopped"

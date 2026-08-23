@@ -221,6 +221,12 @@ jobs:
 
     if: github.event_name != 'pull_request'
 
+    env:
+      NEXUS_REGISTRY: ${{ secrets.NEXUS_REGISTRY }}
+      NEXUS_DOCKER_REPOSITORY: ${{ secrets.NEXUS_DOCKER_REPOSITORY }}
+      NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+      NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+
     steps:
       - name: Download scanned Docker image
         uses: actions/download-artifact@v4
@@ -230,38 +236,121 @@ jobs:
 
       - name: Load Docker image
         run: |
-          docker load -i docker-image.tar
+          set -euo pipefail
+          docker load --input docker-image.tar
+
+      - name: Verify Nexus configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$NEXUS_REGISTRY" || {
+            echo "::error::NEXUS_REGISTRY secret is empty or unavailable."
+            exit 1
+          }
+
+          test -n "$NEXUS_DOCKER_REPOSITORY" || {
+            echo "::error::NEXUS_DOCKER_REPOSITORY secret is empty or unavailable."
+            exit 1
+          }
+
+          test -n "$NEXUS_USERNAME" || {
+            echo "::error::NEXUS_USERNAME secret is empty or unavailable."
+            exit 1
+          }
+
+          test -n "$NEXUS_PASSWORD" || {
+            echo "::error::NEXUS_PASSWORD secret is empty or unavailable."
+            exit 1
+          }
+
+          case "$NEXUS_REGISTRY" in
+            http://*|https://*)
+              echo "::error::NEXUS_REGISTRY must contain only host:port, for example nexus.example.com:8082. Do not include http:// or https://."
+              exit 1
+              ;;
+          esac
+
+          case "$NEXUS_REGISTRY" in
+            */*)
+              echo "::error::NEXUS_REGISTRY must not contain a repository path. Use only host:port."
+              exit 1
+              ;;
+          esac
+
+          echo "Nexus registry: $NEXUS_REGISTRY"
+          echo "Nexus Docker repository: $NEXUS_DOCKER_REPOSITORY"
+
+      - name: Test Nexus Registry Connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Testing HTTPS connectivity to Nexus..."
+
+          HTTP_CODE="$(
+            curl \
+              --silent \
+              --show-error \
+              --output /dev/null \
+              --write-out "%{http_code}" \
+              --connect-timeout 10 \
+              --max-time 30 \
+              "https://${NEXUS_REGISTRY}/v2/"
+          )"
+
+          echo "Nexus /v2/ HTTP status: $HTTP_CODE"
+
+          case "$HTTP_CODE" in
+            200|401)
+              echo "Nexus Docker Registry is reachable."
+              ;;
+            *)
+              echo "::error::Nexus Docker Registry returned HTTP $HTTP_CODE."
+              exit 1
+              ;;
+          esac
+
+      - name: Login to Nexus Docker Registry
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "$NEXUS_PASSWORD" | \
+            docker login "$NEXUS_REGISTRY" \
+              --username "$NEXUS_USERNAME" \
+              --password-stdin
 
       - name: Verify Docker image
         run: |
-          docker image inspect             ${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-      - name: Test Nexus Registry Connectivity
-        run: |
-          echo "Testing Nexus Docker Registry..."
-
-          curl --fail --silent --show-error             --connect-timeout 10             --max-time 30             "https://${{ secrets.NEXUS_REGISTRY }}/v2/"             || true
-
-      - name: Login to Nexus Docker Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ secrets.NEXUS_REGISTRY }}
-          username: ${{ secrets.NEXUS_USERNAME }}
-          password: ${{ secrets.NEXUS_PASSWORD }}
+          set -euo pipefail
+          docker image inspect "${IMAGE_NAME}:${{ github.sha }}"
 
       - name: Tag Docker image
         run: |
-          docker tag             ${{ env.IMAGE_NAME }}:${{ github.sha }}             ${{ secrets.NEXUS_REGISTRY }}/${{ secrets.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          set -euo pipefail
 
-          docker tag             ${{ env.IMAGE_NAME }}:${{ github.sha }}             ${{ secrets.NEXUS_REGISTRY }}/${{ secrets.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:latest
+          docker tag \
+            "${IMAGE_NAME}:${{ github.sha }}" \
+            "${NEXUS_REGISTRY}/${NEXUS_DOCKER_REPOSITORY}/${IMAGE_NAME}:${{ github.sha }}"
+
+          docker tag \
+            "${IMAGE_NAME}:${{ github.sha }}" \
+            "${NEXUS_REGISTRY}/${NEXUS_DOCKER_REPOSITORY}/${IMAGE_NAME}:latest"
 
       - name: Push SHA image to Nexus
         run: |
-          docker push             ${{ secrets.NEXUS_REGISTRY }}/${{ secrets.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          set -euo pipefail
+
+          docker push \
+            "${NEXUS_REGISTRY}/${NEXUS_DOCKER_REPOSITORY}/${IMAGE_NAME}:${{ github.sha }}"
 
       - name: Push latest image to Nexus
         run: |
-          docker push             ${{ secrets.NEXUS_REGISTRY }}/${{ secrets.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:latest
+          set -euo pipefail
+
+          docker push \
+            "${NEXUS_REGISTRY}/${NEXUS_DOCKER_REPOSITORY}/${IMAGE_NAME}:latest"
 
 
   # ============================================================
@@ -275,14 +364,38 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     steps:
+      - name: Validate Nexus configuration
+        shell: bash
+        env:
+          NEXUS_REGISTRY: ${{ secrets.NEXUS_REGISTRY }}
+          NEXUS_DOCKER_REPOSITORY: ${{ secrets.NEXUS_DOCKER_REPOSITORY }}
+        run: |
+          set -euo pipefail
+
+          test -n "$NEXUS_REGISTRY" || {
+            echo "::error::NEXUS_REGISTRY secret is empty or unavailable."
+            exit 1
+          }
+
+          test -n "$NEXUS_DOCKER_REPOSITORY" || {
+            echo "::error::NEXUS_DOCKER_REPOSITORY secret is empty or unavailable."
+            exit 1
+          }
+
+          case "$NEXUS_REGISTRY" in
+            http://*|https://*|*/*)
+              echo "::error::NEXUS_REGISTRY must be host:port only, for example nexus.example.com:8082."
+              exit 1
+              ;;
+          esac
+
       - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-
           script: |
             set -e
 
@@ -295,21 +408,44 @@ jobs:
             whoami
             hostname
 
+            echo "Testing Nexus Registry..."
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --connect-timeout 10 \
+              --max-time 30 \
+              "https://${REGISTRY}/v2/" \
+              > /dev/null
+
             echo "Logging into Nexus..."
-            echo "${{ secrets.NEXUS_PASSWORD }}" |               docker login "$REGISTRY"               -u "${{ secrets.NEXUS_USERNAME }}"               --password-stdin
+            echo "${{ secrets.NEXUS_PASSWORD }}" | \
+              docker login "${REGISTRY}" \
+                --username "${{ secrets.NEXUS_USERNAME }}" \
+                --password-stdin
 
             echo "Pulling image from Nexus..."
-            docker pull "$IMAGE"
+            docker pull "${IMAGE}"
 
             echo "Removing old container..."
-            docker stop "$IMAGE_NAME" || true
-            docker rm "$IMAGE_NAME" || true
+            docker stop "${IMAGE_NAME}" || true
+            docker rm "${IMAGE_NAME}" || true
 
             echo "Starting new container..."
-            docker run -d               --name "$IMAGE_NAME"               --restart unless-stopped               -p 9999:80               "$IMAGE"
+            docker run -d \
+              --name "${IMAGE_NAME}" \
+              --restart unless-stopped \
+              -p 9999:80 \
+              "${IMAGE}"
 
             echo "Testing application..."
             sleep 5
-            curl --fail               --connect-timeout 10               --max-time 30               http://localhost:9999
+
+            curl \
+              --fail \
+              --connect-timeout 10 \
+              --max-time 30 \
+              http://localhost:9999
 
             echo "Deployment completed successfully"
+

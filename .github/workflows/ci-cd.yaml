@@ -17,7 +17,6 @@ permissions:
 env:
   NODE_VERSION: "22"
   IMAGE_NAME: my-react-app
-  REGISTRY: ghcr.io
 
 jobs:
 
@@ -213,48 +212,14 @@ jobs:
 
 
   # ============================================================
-  # 6. ARTIFACT REPOSITORY - NEXUS
+  # 6. PUSH DOCKER IMAGE TO NEXUS REPOSITORY
   # ============================================================
-  nexus:
-    name: Publish Artifact to Nexus
-    runs-on: ubuntu-latest
-
-    needs:
-      - build-test
-
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v6
-
-      - name: Download application artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: application-artifact
-          path: .cicd/output
-
-      - name: Publish artifact to Nexus
-        run: |
-          chmod +x .cicd/scripts/nexus.sh
-          .cicd/scripts/nexus.sh publish "$CONFIG_FILE"
-        env:
-          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
-          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
-
-
-  # ============================================================
-  # 7. PUSH DOCKER IMAGE TO NEXUS
-  # ============================================================
-  docker-push:
+  nexus-docker-push:
     name: Push Docker Image to Nexus
     runs-on: ubuntu-latest
+    needs: trivy-image
 
-    needs:
-      - trivy-image
-      - nexus
-
-    if: |
-      github.event_name != 'pull_request' &&
-      needs.nexus.result == 'success'
+    if: github.event_name != 'pull_request'
 
     steps:
       - name: Download scanned Docker image
@@ -269,9 +234,13 @@ jobs:
 
       - name: Verify Docker image
         run: |
-          docker images
-          docker image inspect \
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker image inspect             ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Test Nexus Registry Connectivity
+        run: |
+          echo "Testing Nexus Docker Registry..."
+
+          curl --fail --silent --show-error             --connect-timeout 10             --max-time 30             "https://${{ secrets.NEXUS_REGISTRY }}/v2/"             || true
 
       - name: Login to Nexus Docker Registry
         uses: docker/login-action@v3
@@ -282,32 +251,26 @@ jobs:
 
       - name: Tag Docker image
         run: |
-          docker tag \
-            ${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            ${{ secrets.NEXUS_REGISTRY }}/${{ env.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker tag             ${{ env.IMAGE_NAME }}:${{ github.sha }}             ${{ secrets.NEXUS_REGISTRY }}/${{ secrets.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          docker tag \
-            ${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            ${{ secrets.NEXUS_REGISTRY }}/${{ env.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:latest
+          docker tag             ${{ env.IMAGE_NAME }}:${{ github.sha }}             ${{ secrets.NEXUS_REGISTRY }}/${{ secrets.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Push Docker image to Nexus
+      - name: Push SHA image to Nexus
         run: |
-          docker push \
-            ${{ secrets.NEXUS_REGISTRY }}/${{ env.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push             ${{ secrets.NEXUS_REGISTRY }}/${{ secrets.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-          docker push \
-            ${{ secrets.NEXUS_REGISTRY }}/${{ env.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:latest
+      - name: Push latest image to Nexus
+        run: |
+          docker push             ${{ secrets.NEXUS_REGISTRY }}/${{ secrets.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:latest
 
 
   # ============================================================
-  # 8. DEPLOY TO VPS
+  # 7. DEPLOY TO VPS
   # ============================================================
   deploy-vps:
     name: Deploy to VPS
     runs-on: ubuntu-latest
-
-    needs:
-      - docker-push
+    needs: nexus-docker-push
 
     if: github.ref == 'refs/heads/main'
 
@@ -323,34 +286,30 @@ jobs:
           script: |
             set -e
 
-            IMAGE="${{ secrets.NEXUS_REGISTRY }}/${{ env.NEXUS_DOCKER_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+            REGISTRY="${{ secrets.NEXUS_REGISTRY }}"
+            REPOSITORY="${{ secrets.NEXUS_DOCKER_REPOSITORY }}"
+            IMAGE_NAME="${{ env.IMAGE_NAME }}"
+            IMAGE="${REGISTRY}/${REPOSITORY}/${IMAGE_NAME}:${{ github.sha }}"
 
             echo "Connected to VPS"
             whoami
             hostname
 
             echo "Logging into Nexus..."
-            echo "${{ secrets.NEXUS_PASSWORD }}" | \
-              docker login "${{ secrets.NEXUS_REGISTRY }}" \
-              -u "${{ secrets.NEXUS_USERNAME }}" \
-              --password-stdin
+            echo "${{ secrets.NEXUS_PASSWORD }}" |               docker login "$REGISTRY"               -u "${{ secrets.NEXUS_USERNAME }}"               --password-stdin
 
             echo "Pulling image from Nexus..."
             docker pull "$IMAGE"
 
             echo "Removing old container..."
-            docker stop "${{ env.IMAGE_NAME }}" || true
-            docker rm "${{ env.IMAGE_NAME }}" || true
+            docker stop "$IMAGE_NAME" || true
+            docker rm "$IMAGE_NAME" || true
 
             echo "Starting new container..."
-            docker run -d \
-              --name "${{ env.IMAGE_NAME }}" \
-              --restart unless-stopped \
-              -p 9999:80 \
-              "$IMAGE"
+            docker run -d               --name "$IMAGE_NAME"               --restart unless-stopped               -p 9999:80               "$IMAGE"
 
             echo "Testing application..."
             sleep 5
-            curl --fail http://localhost:9999
+            curl --fail               --connect-timeout 10               --max-time 30               http://localhost:9999
 
             echo "Deployment completed successfully"

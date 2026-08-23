@@ -451,15 +451,15 @@ jobs:
             whoami
             hostname
 
-            echo "Testing Nexus Registry..."
-            curl \
-              --fail \
+            echo "Checking Nexus registry endpoint..."
+            REGISTRY_HTTP_CODE="$(curl \
               --silent \
-              --show-error \
+              --output /dev/null \
+              --write-out "%{http_code}" \
               --connect-timeout 10 \
               --max-time 30 \
-              "http://${REGISTRY}/v2/" \
-              > /dev/null
+              "http://${REGISTRY}/v2/")"
+            echo "Nexus /v2/ HTTP status: ${REGISTRY_HTTP_CODE} (401 is expected here - it means the registry was found and is asking for credentials, which docker login provides next)"
 
             echo "Logging into Nexus..."
             echo "${{ secrets.NEXUS_PASSWORD }}" | \

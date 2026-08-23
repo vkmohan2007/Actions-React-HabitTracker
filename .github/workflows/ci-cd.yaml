@@ -189,26 +189,13 @@ jobs:
             .
 
       - name: Scan Docker image
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
           format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: 1
-
-      - name: Save Docker image
-        run: |
-          docker save \
-            ${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            -o docker-image.tar
-
-      - name: Upload Docker image
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-image
-          path: docker-image.tar
-          retention-days: 1
 
 
   # ============================================================

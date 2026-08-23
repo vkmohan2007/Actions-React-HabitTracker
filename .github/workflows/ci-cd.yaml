@@ -265,8 +265,8 @@ jobs:
           }
 
           case "$NEXUS_REGISTRY" in
-            http://*|https://*)
-              echo "::error::NEXUS_REGISTRY must contain only host:port, for example nexus.example.com:8081. Do not include http:// or https://."
+            http://*|http://*)
+              echo "::error::NEXUS_REGISTRY must contain only host:port, for example nexus.example.com:8081. Do not include http:// or http://."
               exit 1
               ;;
           esac
@@ -286,7 +286,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Testing HTTPS connectivity to Nexus..."
+          echo "Testing HTTP connectivity to Nexus..."
 
           HTTP_CODE="$(
             curl \
@@ -296,7 +296,7 @@ jobs:
               --write-out "%{http_code}" \
               --connect-timeout 10 \
               --max-time 30 \
-              "https://${NEXUS_REGISTRY}/v2/"
+              "http://${NEXUS_REGISTRY}/v2/"
           )"
 
           echo "Nexus /v2/ HTTP status: $HTTP_CODE"
@@ -383,7 +383,7 @@ jobs:
           }
 
           case "$NEXUS_REGISTRY" in
-            http://*|https://*|*/*)
+            http://*|http://*|*/*)
               echo "::error::NEXUS_REGISTRY must be host:port only, for example nexus.example.com:8081."
               exit 1
               ;;
@@ -415,7 +415,7 @@ jobs:
               --show-error \
               --connect-timeout 10 \
               --max-time 30 \
-              "https://${REGISTRY}/v2/" \
+              "http://${REGISTRY}/v2/" \
               > /dev/null
 
             echo "Logging into Nexus..."

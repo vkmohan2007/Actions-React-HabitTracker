@@ -36,10 +36,8 @@ artifactRepository:
   enabled: true
   type: "nexus"
   repositoryType: "raw"
-
-  url: ""
-  repository: ""
-
+  url: "http://169.58.184.121:8081"
+  repository: "my-raw-repository"
   artifactId: "my-application"
   versionStrategy: "git-sha"
   packaging: "zip"

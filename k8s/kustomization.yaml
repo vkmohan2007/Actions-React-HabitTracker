@@ -4,7 +4,8 @@ kind: Kustomization
 namespace: react-habittracker
 
 resources:
-- namespace.yaml
-- deployment.yaml
-- service.yaml
-- ingress.yaml
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+

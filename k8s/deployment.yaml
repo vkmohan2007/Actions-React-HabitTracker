@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: react-habittracker
+  namespace: react-habittracker
+  labels:
+    app: react-habittracker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: react-habittracker
+  template:
+    metadata:
+      labels:
+        app: react-habittracker
+    spec:
+      containers:
+      - name: react-habittracker
+        image: ghcr.io/vkmohan2007/actions-react-habittracker:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 128Mi
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 20

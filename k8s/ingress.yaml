@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: react-habittracker
+  namespace: react-habittracker
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: habittracker.169.58.184.121.sslip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: react-habittracker
+            port:
+              number: 80
